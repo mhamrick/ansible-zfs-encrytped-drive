@@ -1,0 +1,6 @@
+# Ignore key files
+keys/*
+!keys/.gitkeep
+
+# Ignore real inventory (use inventory.yml.sample as template)
+inventory.yml
