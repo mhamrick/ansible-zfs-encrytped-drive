@@ -1,0 +1,14 @@
+all:
+  hosts:
+    slimsilver:
+      ansible_host: 192.168.2.10
+      ansible_user: zfsuser
+      zpool_name: stor_pool
+      zfs_datasets:
+        - edata
+        - backups
+    farm:
+      ansible_host: 192.168.1.11
+      zpool_name: STORAGE
+      zfs_datasets:
+        - edata

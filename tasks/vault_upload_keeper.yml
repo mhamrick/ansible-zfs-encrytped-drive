@@ -1,0 +1,84 @@
+---
+# Upload ZFS encryption key to Keeper Vault as a file record
+# Requires: keeper CLI installed, config file at keeper_config_path
+
+- name: Verify Keeper CLI is installed
+  ansible.builtin.command:
+    cmd: keeper version
+  delegate_to: localhost
+  become: false
+  register: keeper_version
+  changed_when: false
+  failed_when: keeper_version.rc != 0
+
+- name: Set key title for Keeper
+  ansible.builtin.set_fact:
+    keeper_key_title: "{{ vault_key_title_template }}"
+
+- name: Expand Keeper config path
+  ansible.builtin.set_fact:
+    keeper_config_expanded: "{{ keeper_config_path | expanduser }}"
+
+- name: Override Keeper config path from environment if set
+  ansible.builtin.set_fact:
+    keeper_config_expanded: "{{ lookup('env', 'KEEPER_CONFIG_PATH') }}"
+  when: lookup('env', 'KEEPER_CONFIG_PATH') != ""
+
+- name: Check if record already exists in Keeper
+  ansible.builtin.shell:
+    cmd: >
+      keeper search --config "{{ keeper_config_expanded }}"
+      "{{ keeper_key_title }}" --format json 2>/dev/null |
+      jq -r '.[] | select(.title == "{{ keeper_key_title }}") | .uid' | head -1
+  delegate_to: localhost
+  become: false
+  register: keeper_existing_record
+  changed_when: false
+  failed_when: false
+
+- name: Create new file record in Keeper
+  ansible.builtin.command:
+    cmd: >
+      keeper upload-file
+      --config "{{ keeper_config_expanded }}"
+      --folder "{{ keeper_folder_path }}"
+      --title "{{ keeper_key_title }}"
+      --file "{{ local_key_backup_dir }}/{{ inventory_hostname }}_zfs_drivekey.bin"
+  delegate_to: localhost
+  become: false
+  register: keeper_create_result
+  when: keeper_existing_record.stdout == ""
+  failed_when: vault_fail_on_upload_error and keeper_create_result.rc != 0
+
+- name: Update existing record in Keeper
+  ansible.builtin.shell:
+    cmd: >
+      keeper upload-file
+      --config "{{ keeper_config_expanded }}"
+      --record "{{ keeper_existing_record.stdout }}"
+      --file "{{ local_key_backup_dir }}/{{ inventory_hostname }}_zfs_drivekey.bin }}"
+  delegate_to: localhost
+  become: false
+  register: keeper_update_result
+  when: keeper_existing_record.stdout != ""
+  failed_when: vault_fail_on_upload_error and keeper_update_result.rc != 0
+
+- name: Add custom fields to Keeper record
+  ansible.builtin.command:
+    cmd: >
+      keeper edit
+      --config "{{ keeper_config_expanded }}"
+      "{{ keeper_existing_record.stdout | default(keeper_create_result.stdout) }}"
+      --custom-field "hostname={{ inventory_hostname }}"
+      --custom-field "zpool={{ zpool_name }}"
+      --custom-field "key_path={{ zfs_key_path }}"
+  delegate_to: localhost
+  become: false
+  when: (keeper_create_result is changed) or (keeper_update_result is changed)
+  failed_when: false
+
+- name: Report Keeper upload status
+  ansible.builtin.debug:
+    msg: >
+      Keeper upload {{ 'successful' if (keeper_create_result is changed or keeper_update_result is changed)
+      else 'skipped (no changes)' }} for {{ inventory_hostname }}

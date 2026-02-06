@@ -1,0 +1,17 @@
+# Default variables for ZFS encrypted datasets playbook
+zfs_key_path: /etc/zfs_drivekey.bin
+local_key_backup_dir: ./keys
+
+# Vault Integration (options: "none", "1password", "keeper", "both")
+vault_integration: "1password"
+vault_key_title_template: "ZFS Encryption Key - {{ inventory_hostname }}"
+vault_fail_on_upload_error: false
+
+# 1Password settings
+onepassword_vault: "Infrastructure"
+onepassword_item_type: "document"
+onepassword_tags: ["zfs", "encryption-key"]
+
+# Keeper settings
+keeper_folder_path: "ZFS Keys"
+keeper_config_path: "~/.keeper/config.json"
