@@ -57,8 +57,9 @@ Default variables are defined in `group_vars/all.yml`:
 | `zfs_key_path` | `/etc/zfs_drivekey.bin` | Path to the encryption key on target hosts |
 | `local_key_backup_dir` | `./keys` | Local directory for key backups |
 | `vault_integration` | `"1password"` | Vault provider: `"none"`, `"1password"`, `"keeper"`, or `"both"` |
-| `vault_key_title_template` | `"ZFS Encryption Key - {{ inventory_hostname }}"` | Title template for vault entries |
+| `vault_key_title_template` | `"ZFS-Encryption-Key-{{ inventory_hostname }}"` | Title template for vault entries (no spaces; use hyphens) |
 | `vault_fail_on_upload_error` | `false` | Whether to fail the playbook if vault upload fails |
+| `vault_update_existing` | `false` | When false, never overwrite an existing vault record; only create when missing |
 
 ### Per-Host Variables (set in inventory)
 

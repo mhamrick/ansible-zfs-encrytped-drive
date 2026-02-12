@@ -1,0 +1,119 @@
+---
+# Install AMD AOCL (Optimizing CPU Libraries) on AMD Zen hosts (Threadripper, EPYC, Ryzen).
+# Requires aocl_tarball_path (local path or URL). Download from AMD after accepting EULA:
+# https://www.amd.com/en/developer/aocl.html
+- name: Install AMD AOCL
+  hosts: aocl_hosts
+  become: true
+  vars:
+    aocl_remote_tarball: "/tmp/aocl_install.tar.gz"
+    aocl_extract_dir: "/tmp/aocl_extract"
+
+  tasks:
+    - name: Assert AOCL tarball path is set
+      ansible.builtin.assert:
+        that: aocl_tarball_path is defined and aocl_tarball_path | length > 0
+        fail_msg: "aocl_tarball_path must be set (path on control node or URL). Download AOCL from AMD and accept EULA, then set the variable in group_vars or host_vars."
+
+    - name: Assert x86_64 architecture
+      ansible.builtin.assert:
+        that: ansible_architecture == 'x86_64'
+        fail_msg: "AOCL is only available for 64-bit x86 (AMD Zen). This host is {{ ansible_architecture }}."
+
+    - name: Check if AOCL is already installed at prefix
+      ansible.builtin.stat:
+        path: "{{ aocl_install_prefix }}/lib"
+      register: aocl_lib_dir
+      ignore_errors: true
+
+    - name: Resolve AOCL tarball from control node (local path)
+      ansible.builtin.copy:
+        src: "{{ aocl_tarball_path }}"
+        dest: "{{ aocl_remote_tarball }}"
+        mode: '0644'
+      when:
+        - not (aocl_tarball_path is match('^https?://'))
+        - not (aocl_lib_dir.stat is defined and aocl_lib_dir.stat.exists)
+
+    - name: Download AOCL tarball from URL
+      ansible.builtin.get_url:
+        url: "{{ aocl_tarball_path }}"
+        dest: "{{ aocl_remote_tarball }}"
+        checksum: "{{ aocl_tarball_checksum | default(omit) }}"
+        mode: '0644'
+      when:
+        - aocl_tarball_path is match('^https?://')
+        - not (aocl_lib_dir.stat is defined and aocl_lib_dir.stat.exists)
+
+    - name: Ensure extract directory exists and is empty
+      ansible.builtin.file:
+        path: "{{ aocl_extract_dir }}"
+        state: directory
+        mode: '0755'
+      when: not (aocl_lib_dir.stat is defined and aocl_lib_dir.stat.exists)
+
+    - name: Unarchive AOCL tarball
+      ansible.builtin.unarchive:
+        src: "{{ aocl_remote_tarball }}"
+        dest: "{{ aocl_extract_dir }}"
+        remote_src: true
+        creates: "{{ aocl_extract_dir }}/install.sh"
+      when: not (aocl_lib_dir.stat is defined and aocl_lib_dir.stat.exists)
+
+    - name: Ensure install prefix directory exists
+      ansible.builtin.file:
+        path: "{{ aocl_install_prefix }}"
+        state: directory
+        mode: '0755'
+      when: not (aocl_lib_dir.stat is defined and aocl_lib_dir.stat.exists)
+
+    - name: Run AOCL install.sh
+      ansible.builtin.shell: |
+        set -e
+        cd "{{ aocl_extract_dir }}"
+        # install.sh may use -prefix or --prefix; try --prefix first (adjust if your package differs)
+        ./install.sh --prefix="{{ aocl_install_prefix }}"
+      args:
+        executable: /bin/bash
+      when: not (aocl_lib_dir.stat is defined and aocl_lib_dir.stat.exists)
+
+    - name: Remove temporary extract directory
+      ansible.builtin.file:
+        path: "{{ aocl_extract_dir }}"
+        state: absent
+      when: not (aocl_lib_dir.stat is defined and aocl_lib_dir.stat.exists)
+
+    - name: Remove temporary tarball from target
+      ansible.builtin.file:
+        path: "{{ aocl_remote_tarball }}"
+        state: absent
+      when: not (aocl_lib_dir.stat is defined and aocl_lib_dir.stat.exists)
+
+    - name: Install AOCL environment script (profile.d)
+      ansible.builtin.copy:
+        dest: /etc/profile.d/aocl.sh
+        content: |
+          # AMD AOCL - source from /etc/profile.d/aocl.sh
+          export AOCL_ROOT="{{ aocl_install_prefix }}"
+          export PATH="{{ aocl_install_prefix }}/bin:$PATH"
+          if [ -d "{{ aocl_install_prefix }}/lib64" ]; then
+            export LD_LIBRARY_PATH="{{ aocl_install_prefix }}/lib64:$LD_LIBRARY_PATH"
+          fi
+          if [ -d "{{ aocl_install_prefix }}/lib" ]; then
+            export LD_LIBRARY_PATH="{{ aocl_install_prefix }}/lib:$LD_LIBRARY_PATH"
+          fi
+        mode: '0644'
+      when: aocl_setup_environment | default(true) | bool
+
+    - name: Verify AOCL installation
+      ansible.builtin.find:
+        paths: "{{ aocl_install_prefix }}"
+        patterns: "*.so*,*.a"
+        file_type: file
+      register: aocl_libs
+      changed_when: false
+
+    - name: Report AOCL library count
+      ansible.builtin.debug:
+        msg: "AOCL installed at {{ aocl_install_prefix }} ({{ aocl_libs.matched }} library files found)."
+      when: aocl_libs.matched is defined and aocl_libs.matched | int > 0

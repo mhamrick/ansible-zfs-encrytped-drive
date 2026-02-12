@@ -14,6 +14,7 @@
         path: "{{ zfs_key_path }}"
       register: key_file
 
+    # Only create a key if none exists; never overwrite an existing remote key
     - name: Create ZFS encryption key file
       ansible.builtin.shell:
         cmd: dd if=/dev/urandom of={{ zfs_key_path }} bs=32 count=1
@@ -65,8 +66,8 @@
         - vault_integration in ["1password", "both"]
         - fetch_result is changed
 
-    - name: Upload key to Keeper
+    # When using Keeper: upload if new/updated key, and when datasets already exist
+    # ensure the key is in Keeper (create record if missing).
+    - name: Upload key to Keeper (or ensure existing key is in Keeper)
       ansible.builtin.include_tasks: tasks/vault_upload_keeper.yml
-      when:
-        - vault_integration in ["keeper", "both"]
-        - fetch_result is changed
+      when: vault_integration in ["keeper", "both"]

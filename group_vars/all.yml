@@ -3,9 +3,11 @@ zfs_key_path: /etc/zfs_drivekey.bin
 local_key_backup_dir: ./keys
 
 # Vault Integration (options: "none", "1password", "keeper", "both")
-vault_integration: "1password"
-vault_key_title_template: "ZFS Encryption Key - {{ inventory_hostname }}"
+vault_integration: "keeper"
+vault_key_title_template: "ZFS-Encryption-Key-{{ inventory_hostname }}"
 vault_fail_on_upload_error: false
+# When false, never overwrite an existing vault record; only create when missing
+vault_update_existing: false
 
 # 1Password settings
 onepassword_vault: "Infrastructure"
