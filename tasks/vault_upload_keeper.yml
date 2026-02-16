@@ -2,7 +2,7 @@
 # Upload ZFS encryption key to Keeper Vault as a file record.
 # Uses Keeper Commander CLI: record-add (create), upload-attachment (update), record-update (custom fields).
 # Requires: keeper CLI (pip install keepercommander), config at keeper_config_path.
-# When using Keeper, we verify login first and fail early if not authenticated.
+# Login is verified once at the start of the playbook (zfs_encrypted_datasets.yml); do not run login-status here as repeated checks can log Keeper out.
 
 - name: Print Keeper command (version)
   ansible.builtin.debug:
@@ -32,37 +32,13 @@
     keeper_config_expanded: "{{ lookup('env', 'KEEPER_CONFIG_PATH') }}"
   when: lookup('env', 'KEEPER_CONFIG_PATH') != ""
 
-- name: Print Keeper command (login check)
-  ansible.builtin.debug:
-    msg: "Keeper command: keeper --config {{ keeper_config_expanded }} login-status"
-  delegate_to: localhost
-  become: false
-
-- name: Verify Keeper is logged in (config valid, session active)
-  ansible.builtin.command:
-    cmd: keeper --config "{{ keeper_config_expanded }}" login-status
-  delegate_to: localhost
-  become: false
-  register: keeper_login_check
-  changed_when: false
-  failed_when: false  # fail in next task with clear message
-
-- name: Fail if Keeper is not logged in
-  ansible.builtin.fail:
-    msg: >
-      Keeper is not logged in or config is invalid.
-      Config: {{ keeper_config_expanded }}
-      Run 'keeper login' (or re-login) to authenticate, then re-run this playbook.
-      stderr: {{ keeper_login_check.stderr | default('(none)') }}
-      stdout: {{ keeper_login_check.stdout | default('(none)') }}
-  when: keeper_login_check.rc != 0 or 'Logged in' not in (keeper_login_check.stdout | default(''))
-
-# Resolve key file path on control node (absolute so delegate_to: localhost finds it)
+# Resolve key file path on control node (absolute, no ./ in path - same as working test_keeper_zfskeys.yml)
 - name: Set absolute path for Keeper key file on control node
   ansible.builtin.set_fact:
-    keeper_key_file_path: "{{ (local_key_backup_dir_expanded.startswith('/') and local_key_backup_dir_expanded or (playbook_dir + '/' + local_key_backup_dir)) }}/{{ inventory_hostname }}_zfs_drivekey.bin"
+    keeper_key_file_path: "{{ keeper_key_base_dir }}/{{ inventory_hostname }}_zfs_drivekey.bin"
   vars:
     local_key_backup_dir_expanded: "{{ local_key_backup_dir | expanduser }}"
+    keeper_key_base_dir: "{{ local_key_backup_dir_expanded if local_key_backup_dir_expanded.startswith('/') else (playbook_dir + '/' + (local_key_backup_dir_expanded | replace('./', '') | trim)) }}"
   delegate_to: localhost
   become: false
 
@@ -87,7 +63,7 @@
 
 - name: Search Keeper for existing record (raw)
   ansible.builtin.shell: |
-    echo "0" | keeper --config "{{ keeper_config_expanded }}" --batch-mode search "{{ keeper_key_title }}" --format json 2>&1
+    printf '1\n1\n' | keeper --config "{{ keeper_config_expanded }}" --batch-mode search "{{ keeper_key_title }}" --format json 2>&1
   delegate_to: localhost
   become: false
   register: keeper_search_raw
@@ -160,10 +136,10 @@
   become: false
   when: keeper_existing_record_uid | default('') == ""
 
-# Pipe "0" so Keeper Commander "Selection:" prompt gets first option and record is created
+# Same pattern as working test_keeper_zfskeys.yml: yes 1 | head -20, absolute key path, 2>&1
 - name: Create new file record in Keeper (record-add with file attachment)
   ansible.builtin.shell: |
-    echo "0" | keeper --config "{{ keeper_config_expanded }}" --batch-mode record-add -t "{{ keeper_key_title }}" -rt general --folder "{{ keeper_folder_path }}" "file=@{{ keeper_key_file_path }}"
+    yes 1 | head -20 | keeper --config "{{ keeper_config_expanded }}" --batch-mode record-add -t "{{ keeper_key_title }}" -rt general --folder "{{ keeper_folder_path }}" "file=@{{ keeper_key_file_path }}" 2>&1
   delegate_to: localhost
   become: false
   register: keeper_create_result
@@ -209,7 +185,7 @@
 
 - name: Update existing record in Keeper (upload-attachment)
   ansible.builtin.shell: |
-    echo "0" | keeper --config "{{ keeper_config_expanded }}" --batch-mode upload-attachment -r "{{ keeper_existing_record_uid }}" "file=@{{ keeper_key_file_path }}"
+    echo "1" | keeper --config "{{ keeper_config_expanded }}" --batch-mode upload-attachment -r "{{ keeper_existing_record_uid }}" "file=@{{ keeper_key_file_path }}"
   delegate_to: localhost
   become: false
   register: keeper_update_result
@@ -253,7 +229,7 @@
 
 - name: Re-search Keeper for record UID after create
   ansible.builtin.shell: |
-    echo "0" | keeper --config "{{ keeper_config_expanded }}" --batch-mode search "{{ keeper_key_title }}" --format json 2>&1 | grep -E '^\[|^\{' | jq -r 'if type == "array" then .[] | select(.title == "{{ keeper_key_title }}") | .uid elif type == "object" then (if .title == "{{ keeper_key_title }}" then .uid else empty end) else empty end' | head -1
+    printf '1\n1\n' | keeper --config "{{ keeper_config_expanded }}" --batch-mode search "{{ keeper_key_title }}" --format json 2>&1 | grep -E '^\[|^\{' | jq -r 'if type == "array" then .[] | select(.title == "{{ keeper_key_title }}") | .uid elif type == "object" then (if .title == "{{ keeper_key_title }}" then .uid else empty end) else empty end' | head -1
   delegate_to: localhost
   become: false
   register: keeper_uid_after_create
@@ -304,7 +280,7 @@
 
 - name: Add custom fields to Keeper record (record-update)
   ansible.builtin.shell: |
-    echo "0" | keeper --config "{{ keeper_config_expanded }}" --batch-mode record-update "{{ keeper_record_uid_for_edit }}" "c.text.hostname={{ inventory_hostname }}" "c.text.zpool={{ zpool_name }}" "c.text.key_path={{ zfs_key_path }}"
+    echo "1" | keeper --config "{{ keeper_config_expanded }}" --batch-mode record-update "{{ keeper_record_uid_for_edit }}" "c.text.hostname={{ inventory_hostname }}" "c.text.zpool={{ zpool_name }}" "c.text.key_path={{ zfs_key_path }}"
   delegate_to: localhost
   become: false
   when: keeper_record_uid_for_edit is defined and (keeper_record_uid_for_edit | length > 0)

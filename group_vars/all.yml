@@ -14,6 +14,6 @@ onepassword_vault: "Infrastructure"
 onepassword_item_type: "document"
 onepassword_tags: ["zfs", "encryption-key"]
 
-# Keeper settings
-keeper_folder_path: "ZFS Keys"
+# Keeper settings (same folder as test_keeper_zfskeys.yml so records go in ZFSKeys)
+keeper_folder_path: "ZFSKeys"
 keeper_config_path: "~/.keeper/config.json"

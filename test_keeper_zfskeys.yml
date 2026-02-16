@@ -12,8 +12,21 @@
     keeper_test_folder: "ZFSKeys"
     keeper_config_path: "~/.keeper/config.json"
     keeper_test_title: "Test-ZFS-Key-{{ ansible_date_time.epoch }}"
+    keeper_test_key_dir: "{{ playbook_dir }}/keys"
+    keeper_test_key_file: "{{ keeper_test_key_dir }}/test_zfs_key_{{ ansible_date_time.epoch }}.bin"
 
   tasks:
+    - name: Ensure test key directory exists
+      ansible.builtin.file:
+        path: "{{ keeper_test_key_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: Create test key file (32 bytes random)
+      ansible.builtin.shell:
+        cmd: dd if=/dev/urandom of={{ keeper_test_key_file }} bs=32 count=1
+      changed_when: true
+
     - name: Verify Keeper CLI is installed
       ansible.builtin.command:
         cmd: keeper version
@@ -36,12 +49,13 @@
         msg: "Keeper is not logged in. Run 'keeper login'. stdout: {{ keeper_login_check.stdout | default('') }}"
       when: keeper_login_check.rc != 0 or 'Logged in' not in (keeper_login_check.stdout | default(''))
 
-    - name: Add test record to ZFSKeys folder
+    - name: Add test record to ZFSKeys folder with key file attachment
       ansible.builtin.shell: |
-        echo "0" | keeper --config "{{ keeper_config_expanded }}" --batch-mode record-add \
+        yes 1 | head -20 | keeper --config "{{ keeper_config_expanded }}" --batch-mode record-add \
           -t "{{ keeper_test_title }}" \
           -rt general \
-          --folder "{{ keeper_test_folder }}" 2>&1
+          --folder "{{ keeper_test_folder }}" \
+          "file=@{{ keeper_test_key_file }}" 2>&1
       args:
         executable: /bin/bash
       register: keeper_add_result
@@ -52,6 +66,7 @@
         msg:
           - "Title: {{ keeper_test_title }}"
           - "Folder: {{ keeper_test_folder }}"
+          - "Key file: {{ keeper_test_key_file }}"
           - "rc: {{ keeper_add_result.rc }}"
           - "stdout: {{ keeper_add_result.stdout | default('(none)') }}"
           - "stderr: {{ keeper_add_result.stderr | default('(none)') }}"
@@ -60,3 +75,85 @@
       ansible.builtin.fail:
         msg: "Keeper record-add failed. stderr: {{ keeper_add_result.stderr | default('') }}"
       when: keeper_add_result.rc != 0
+
+    - name: Search Keeper for the record just added
+      ansible.builtin.shell: |
+        printf '1\n1\n' | keeper --config "{{ keeper_config_expanded }}" --batch-mode search "{{ keeper_test_title }}" --format json 2>&1
+      args:
+        executable: /bin/bash
+      register: keeper_search_result
+      changed_when: false
+      when: keeper_add_result.rc == 0
+
+    - name: Write search output to temp file for parsing
+      ansible.builtin.copy:
+        content: "{{ keeper_search_result.stdout }}"
+        dest: "/tmp/keeper_test_search.tmp"
+      when:
+        - keeper_add_result.rc == 0
+        - keeper_search_result.stdout is defined
+        - keeper_search_result.stdout | length > 0
+
+    - name: Parse search result (record UID and title)
+      ansible.builtin.shell: |
+        grep -E '^\[|^\{' /tmp/keeper_test_search.tmp | jq -r 'if type == "array" then .[] | select(.title == "{{ keeper_test_title }}") | "\(.title)|\(.uid)" elif type == "object" then (if .title == "{{ keeper_test_title }}" then "\(.title)|\(.uid)" else empty end) else empty end' | head -1
+      args:
+        executable: /bin/bash
+      register: keeper_found_parsed
+      changed_when: false
+      when:
+        - keeper_add_result.rc == 0
+        - keeper_search_result.stdout is defined
+        - keeper_search_result.stdout | length > 0
+
+    - name: Remove temp search file
+      ansible.builtin.file:
+        path: "/tmp/keeper_test_search.tmp"
+        state: absent
+      when:
+        - keeper_add_result.rc == 0
+        - keeper_search_result.stdout is defined
+
+    - name: Show record found by search
+      ansible.builtin.debug:
+        msg:
+          - "Searched for: {{ keeper_test_title }}"
+          - "Found: {{ keeper_found_parsed.stdout | default('(none)') }}"
+          - "Raw search (first 300 chars): {{ (keeper_search_result.stdout | default(''))[:300] }}"
+      when:
+        - keeper_add_result.rc == 0
+        - keeper_search_result is defined
+
+    - name: Search Keeper for Test-ZFS-Key-1771258638
+      ansible.builtin.shell: |
+        printf '1\n1\n' | keeper --config "{{ keeper_config_expanded }}" --batch-mode search "Test-ZFS-Key-1771258638" --format json 2>&1
+      args:
+        executable: /bin/bash
+      register: keeper_search_1771258638
+
+    - name: Write search output for 1771258638 to temp file
+      ansible.builtin.copy:
+        content: "{{ keeper_search_1771258638.stdout }}"
+        dest: "/tmp/keeper_test_search_1771258638.tmp"
+      when: keeper_search_1771258638.stdout is defined and keeper_search_1771258638.stdout | length > 0
+
+    - name: Parse search result for Test-ZFS-Key-1771258638
+      ansible.builtin.shell: |
+        grep -E '^\[|^\{' /tmp/keeper_test_search_1771258638.tmp | jq -r 'if type == "array" then .[] | select(.title == "Test-ZFS-Key-1771258638") | "\(.title)|\(.uid)" elif type == "object" then (if .title == "Test-ZFS-Key-1771258638" then "\(.title)|\(.uid)" else empty end) else empty end' | head -1
+      args:
+        executable: /bin/bash
+      register: keeper_found_1771258638
+      changed_when: false
+      when: keeper_search_1771258638.stdout is defined and keeper_search_1771258638.stdout | length > 0
+
+    - name: Remove temp search file for 1771258638
+      ansible.builtin.file:
+        path: "/tmp/keeper_test_search_1771258638.tmp"
+        state: absent
+
+    - name: Show record found for Test-ZFS-Key-1771258638
+      ansible.builtin.debug:
+        msg:
+          - "Searched for: Test-ZFS-Key-1771258638"
+          - "Found: {{ keeper_found_1771258638.stdout | default('(none)') }}"
+          - "Raw search (first 300 chars): {{ (keeper_search_1771258638.stdout | default(''))[:300] }}"
