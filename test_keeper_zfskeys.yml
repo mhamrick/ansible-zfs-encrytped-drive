@@ -1,0 +1,62 @@
+---
+# Test playbook: create one Keeper record in the ZFSKeys folder.
+# Run: ansible-playbook test_keeper_zfskeys.yml
+# Uses Keeper Commander CLI. Requires: keeper CLI, config (e.g. ~/.keeper/config.json).
+
+- name: Test Keeper – add record to ZFSKeys folder
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    keeper_test_folder: "ZFSKeys"
+    keeper_config_path: "~/.keeper/config.json"
+    keeper_test_title: "Test-ZFS-Key-{{ ansible_date_time.epoch }}"
+
+  tasks:
+    - name: Verify Keeper CLI is installed
+      ansible.builtin.command:
+        cmd: keeper version
+      register: keeper_version
+      changed_when: false
+
+    - name: Expand Keeper config path
+      ansible.builtin.set_fact:
+        keeper_config_expanded: "{{ (lookup('env', 'KEEPER_CONFIG_PATH') | length > 0) | ternary(lookup('env', 'KEEPER_CONFIG_PATH'), keeper_config_path | expanduser) }}"
+
+    - name: Verify Keeper is logged in
+      ansible.builtin.command:
+        cmd: keeper --config "{{ keeper_config_expanded }}" login-status
+      register: keeper_login_check
+      changed_when: false
+      failed_when: false
+
+    - name: Fail if Keeper is not logged in
+      ansible.builtin.fail:
+        msg: "Keeper is not logged in. Run 'keeper login'. stdout: {{ keeper_login_check.stdout | default('') }}"
+      when: keeper_login_check.rc != 0 or 'Logged in' not in (keeper_login_check.stdout | default(''))
+
+    - name: Add test record to ZFSKeys folder
+      ansible.builtin.shell: |
+        echo "0" | keeper --config "{{ keeper_config_expanded }}" --batch-mode record-add \
+          -t "{{ keeper_test_title }}" \
+          -rt general \
+          --folder "{{ keeper_test_folder }}" 2>&1
+      args:
+        executable: /bin/bash
+      register: keeper_add_result
+      changed_when: keeper_add_result.rc == 0
+
+    - name: Show add result
+      ansible.builtin.debug:
+        msg:
+          - "Title: {{ keeper_test_title }}"
+          - "Folder: {{ keeper_test_folder }}"
+          - "rc: {{ keeper_add_result.rc }}"
+          - "stdout: {{ keeper_add_result.stdout | default('(none)') }}"
+          - "stderr: {{ keeper_add_result.stderr | default('(none)') }}"
+
+    - name: Fail if record-add failed
+      ansible.builtin.fail:
+        msg: "Keeper record-add failed. stderr: {{ keeper_add_result.stderr | default('') }}"
+      when: keeper_add_result.rc != 0

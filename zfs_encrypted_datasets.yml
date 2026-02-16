@@ -3,6 +3,34 @@
   hosts: all
   become: true
   tasks:
+    - name: Keeper login check (when using Keeper)
+      block:
+        - name: Expand Keeper config path for login check
+          ansible.builtin.set_fact:
+            keeper_config_expanded: "{{ (lookup('env', 'KEEPER_CONFIG_PATH') | length > 0) | ternary(lookup('env', 'KEEPER_CONFIG_PATH'), keeper_config_path | expanduser) }}"
+          delegate_to: localhost
+          become: false
+          run_once: true
+
+        - name: Verify Keeper is logged in
+          ansible.builtin.command:
+            cmd: keeper --config "{{ keeper_config_expanded }}" login-status
+          delegate_to: localhost
+          become: false
+          run_once: true
+          register: keeper_login_check
+          changed_when: false
+          failed_when: false
+
+        - name: Fail if Keeper is not logged in
+          ansible.builtin.fail:
+            msg: "Keeper is not logged in. Run 'keeper login'. stdout: {{ keeper_login_check.stdout | default('') }}"
+          when: keeper_login_check.rc != 0 or 'Logged in' not in (keeper_login_check.stdout | default(''))
+          delegate_to: localhost
+          become: false
+          run_once: true
+      when: vault_integration in ["keeper", "both"]
+
     - name: Install zfsutils-linux package
       ansible.builtin.apt:
         name: zfsutils-linux
